@@ -30,8 +30,16 @@ addon.DefaultLimit = 6
 addon.MaxRows = 12
 addon.FriendlyNameplatesCVar = "nameplateShowFriendlyPlayers"
 
+function addon.SetDebugLogging(db, enabled)
+    db.debugLogging = enabled == true
+    if not db.debugLogging then
+        db.debugReports = nil
+    end
+end
+
 function addon.LoadSettings(saved)
     local db = type(saved) == "table" and saved or {}
+    addon.SetDebugLogging(db, db.debugLogging)
     for _, mode in ipairs(addon.Modes) do
         local profile = type(db[mode.key]) == "table" and db[mode.key] or {}
         db[mode.key] = profile
@@ -81,21 +89,26 @@ local function hasText(value)
     return readable(value) and type(value) == "string" and value ~= ""
 end
 
-local function unitIdentity(unit, isPlayer)
-    local guid = UnitGUID(unit)
-    local name, realm
-    if isPlayer then
-        name, realm = UnitFullName(unit)
-    else
-        name = UnitName(unit)
+local nameSeparators = Constants and Constants.CharacterNameSeparatorConsts
+local surnameSeparator = nameSeparators and nameSeparators.CHARACTERNAME_SURNAME_SEPARATOR or " "
+
+local function formatName(name, surname)
+    if hasText(surname) and not name:find(surnameSeparator, 1, true) then
+        return name .. surnameSeparator .. surname
     end
-    if not readable(guid) or not readable(name) or not readable(realm) then
+    return name
+end
+
+local function unitIdentity(unit)
+    local guid = UnitGUID(unit)
+    local name, surname = UnitFullName(unit)
+    if not readable(guid) or not readable(name) or not readable(surname) then
         return nil, nil, "identity restricted"
     end
     if not hasText(guid) or not hasText(name) then
         return nil, nil, "identity missing"
     end
-    return guid, hasText(realm) and (name .. "-" .. realm) or name
+    return guid, formatName(name, surname)
 end
 
 local function makeEntry(unit, guid, name, isPlayer, fromNameplate)
@@ -123,29 +136,26 @@ local function getSelectedTarget()
     end
 
     local isPlayer = yes(UnitIsPlayer("target"))
-    local name, realm
+    local name, surname
     if isPlayer then
-        name, realm = UnitFullName("target")
+        name, surname = UnitFullName("target")
     end
-    if not hasText(name) or not readable(realm) then
-        local unitName, unitRealm = UnitName("target")
+    if not hasText(name) or not readable(surname) then
+        local unitName, unitSurname = UnitName("target")
         if hasText(unitName) or not hasText(name) then
-            name, realm = unitName, unitRealm
+            name, surname = unitName, unitSurname
         end
     end
 
     local guid = UnitGUID("target")
     local reason
-    if not readable(guid) or not readable(name) or not readable(realm) then
+    if not readable(guid) or not readable(name) or not readable(surname) then
         reason = "identity restricted"
     elseif not hasText(guid) or not hasText(name) then
         reason = "identity unavailable"
     end
 
-    local displayName = hasText(name) and name or "Name unavailable"
-    if hasText(name) and hasText(realm) then
-        displayName = name .. "-" .. realm
-    end
+    local displayName = hasText(name) and formatName(name, surname) or "Name unavailable"
     local target = makeEntry("target", hasText(guid) and guid or nil, displayName, isPlayer)
     target.readOnly = reason ~= nil
     return target, reason or "ready"
@@ -216,7 +226,7 @@ local function identify(unit, mode, isRaid, otherGuild)
         return nil, nil, "view filter"
     end
 
-    return unitIdentity(unit, true)
+    return unitIdentity(unit)
 end
 
 function addon.GetNearby(mode, limit, otherGuild, pinTarget, diagnostics)

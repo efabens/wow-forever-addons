@@ -17,6 +17,7 @@ Restart Forever after a first install or run `/reload` after updating.
 - **Anyone** shows any friendly player on a visible nameplate, including players without a guild.
 - **Other Guild** shows friendly players on visible nameplates who match the full guild name you enter in **Other Guild → Guild name → Edit** in GuildWave's Options. The name and last selected view are saved per character.
 - **Right-click the window header or background** to change views. Right-click a name and choose **Target** to select that player while out of combat. The menu also offers Wave, Dance, Say hello, Cheer, Salute, Say thanks, Fart, Whistle, Chicken, and Whisper. Whisper opens a draft addressed to that player.
+- Player rows, exact-name targeting, and whisper drafts use the full Forever character name, with a space between the first name and surname.
 - **Options** opens the current view's settings. Set a separate left-click action for Guild, Party/Raid, Anyone, and Other Guild. Anyone and Other Guild share Guild's right-click menu and list limit. The limit starts at six names and supports 1–12. Settings and window position are saved per character.
 - **Pin selected target to top** in Options gives the player or NPC you've selected its own row above the nearby-name limit in every view. The row changes when you select someone else and disappears when you clear your target. A target with a restricted identity may appear with its actions unavailable. Use `/guildwave debug` to check the pin setting and selected target status.
 
@@ -26,7 +27,7 @@ Left-click the GuildWave minimap button to toggle the panel and right-click it f
 
 If the list is empty, switch to **Anyone** and click **Enable friendly player nameplates** if the button appears. Type `/guildwave debug` near a friendly player to see the setting, the number of nameplates the client exposed, and why any units were skipped.
 
-When you reload or log out, Forever writes the report to the character's `WTF/Account/<account>/<realm>/<character>/SavedVariables/GuildWave.lua`. GuildWave keeps the latest `/guildwave debug` snapshot and the latest shutdown snapshot in `GuildWaveDB.debugReports`. After a Target click, the report includes its command, any observed client targeting call or error, and the selection result immediately and a quarter-second later.
+Debug logging is off by default. `/guildwave debug` prints a one-time scan in chat. Turn on **Save debug reports** in GuildWave's main Options category or use `/guildwave debug on` to save diagnostics. While enabled, GuildWave keeps the latest manual and shutdown snapshots in the character's `WTF/Account/<account>/<realm>/<character>/SavedVariables/GuildWave.lua` under `GuildWaveDB.debugReports`. A Target report includes the command, observed client calls or errors, and the immediate and delayed selection results. `/guildwave debug off` clears the reports from SavedVariables on the next reload or logout.
 
 ## Validate
 

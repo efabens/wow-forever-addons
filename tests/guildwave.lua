@@ -8,6 +8,13 @@ assert(saved.guild.limit == addon.MaxRows and saved.group.limit == addon.Default
 assert(saved.guild.menu_WAVE == false and saved.group.menu_WAVE == true)
 assert(saved.guild.menu_TARGET == true and saved.group.menu_TARGET == true)
 assert(addon.LoadSettings({ guild = { menu_TARGET = false } }).guild.menu_TARGET == false)
+assert(saved.debugLogging == false and saved.debugReports == nil)
+local oldReport = { logout = { rows = 1 } }
+assert(addon.LoadSettings({ debugReports = oldReport }).debugReports == nil)
+local savedDebug = addon.LoadSettings({ debugLogging = true, debugReports = oldReport })
+assert(savedDebug.debugLogging == true and savedDebug.debugReports == oldReport)
+addon.SetDebugLogging(savedDebug, false)
+assert(savedDebug.debugLogging == false and savedDebug.debugReports == nil)
 assert(saved.pinTarget == false)
 local migratedPin = addon.LoadSettings({ pinFocus = true })
 assert(migratedPin.pinTarget == true and migratedPin.pinFocus == nil)
@@ -24,7 +31,7 @@ assert(migrated.guild.left == "WAVE" and migrated.group.left == "SALUTE")
 assert(migrated.anyone.left == "CHICKEN" and migrated.other.left == "WHISTLE")
 
 local secret = {}
-local ada = { name = "Ada", realm = "OtherRealm", guid = "A", guild = true, group = true, inRange = true }
+local ada = { name = "Ada", surname = "Stone", guid = "A", guild = true, group = true, inRange = true }
 local bea = { name = "Bea", guid = "B", guild = true }
 local player = { name = "Player", guid = "P", guild = true, group = true, self = true }
 local units = {
@@ -62,9 +69,9 @@ function UnitIsInInteractRange(unit) return units[unit].canInteract == true end
 function UnitGUID(unit) return units[unit] and units[unit].guid end
 function UnitFullName(unit)
     local info = units[unit]
-    if not info.fullNameMissing then return info.name, info.realm end
+    if not info.fullNameMissing then return info.name, info.surname end
 end
-function UnitName(unit) return units[unit].name, units[unit].realm end
+function UnitName(unit) return units[unit].name, units[unit].surname end
 function UnitClass() return "Mage", "MAGE" end
 
 local function plate(unit)
@@ -104,14 +111,19 @@ ChatFrameUtil = {
 }
 
 local guild, guildTotal = addon.GetNearby("guild", 1)
-assert(guildTotal == 2 and #guild == 1 and guild[1].name == "Ada-OtherRealm")
+assert(guildTotal == 2 and #guild == 1 and guild[1].name == "Ada Stone")
 local adaEntry = guild[1]
-assert(addon.GetTargetMacro(adaEntry, "guild") == "/targetexact [nocombat] Ada-OtherRealm")
+assert(addon.GetTargetMacro(adaEntry, "guild") == "/targetexact [nocombat] Ada Stone")
+ada.name = "Ada Stone"
+assert(addon.GetTargetMacro(adaEntry, "guild") == "/targetexact [nocombat] Ada Stone")
+ada.name = "Ada"
+local beaEntry = addon.GetNearby("guild", 2)[2]
+assert(addon.GetTargetMacro(beaEntry, "guild") == "/targetexact [nocombat] Bea")
 assert(addon.GetTargetResult(adaEntry) == "no target")
 assert(#emotes == 0 and #whispers == 0)
 assert(addon.Perform("WAVE", adaEntry, "guild") == nil)
 assert(#emotes == 1 and emotes[1].action == "WAVE" and emotes[1].unit == "nameplate3")
-assert(addon.Perform("WHISPER", adaEntry, "guild") == nil and whispers[1] == "Ada-OtherRealm")
+assert(addon.Perform("WHISPER", adaEntry, "guild") == nil and whispers[1] == "Ada Stone")
 
 lockdown = true
 assert(addon.Perform("WAVE", adaEntry, "guild") == "Emotes are restricted here.")
@@ -170,11 +182,11 @@ local regular, count, target = addon.GetNearby("anyone", 1, nil, false)
 assert(count == 4 and #regular == 1 and regular[1].guid == ada.guid and target == nil)
 regular, count, target = addon.GetNearby("anyone", 1, nil, true)
 assert(count == 3 and #regular == 1 and regular[1].guid == bea.guid)
-assert(target.unit == "target" and target.guid == ada.guid and target.isPlayer)
+assert(target.unit == "target" and target.guid == ada.guid and target.name == "Ada Stone" and target.isPlayer)
 assert(addon.GetTargetMacro(target, "anyone") == nil)
 assert(addon.Perform("WAVE", target, "other", "Unrelated Guild") == nil)
 assert(#emotes == 4 and emotes[4].action == "WAVE" and emotes[4].unit == nil)
-units.target = { guid = ada.guid, name = ada.name, realm = ada.realm, fullNameMissing = true }
+units.target = { guid = ada.guid, name = ada.name, surname = ada.surname, fullNameMissing = true }
 local _, _, fallbackTarget = addon.GetNearby("anyone", 1, nil, true)
 assert(fallbackTarget.name == target.name and not fallbackTarget.readOnly)
 

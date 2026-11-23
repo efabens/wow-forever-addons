@@ -9,7 +9,7 @@ local rowHeight = 29
 local refreshQueued = false
 local moving = false
 local playerMenu, lastTargetAction
-local targetTrace
+local debugSetting, targetHooks, pendingTargetClick, events
 
 local function profileKey(mode)
     return addon.Views[mode].shared or mode
@@ -306,13 +306,14 @@ local menuTitleHeight = 25
 local function traceTargetCalls()
     local macroHook = C_Macro and type(C_Macro.RunMacroText) == "function"
         and pcall(hooksecurefunc, C_Macro, "RunMacroText", function(text)
-            if targetTrace and (not issecretvalue or not issecretvalue(text)) and text == targetTrace.report.macro then
-                targetTrace.report.macroDispatch = "observed"
+            local report = pendingTargetClick and pendingTargetClick.report
+            if report and (not issecretvalue or not issecretvalue(text)) and text == report.macro then
+                report.macroDispatch = "observed"
             end
         end)
     local targetHook = type(TargetUnit) == "function" and pcall(hooksecurefunc, "TargetUnit", function(unit, exact)
-        if targetTrace and not targetTrace.report.afterClick then
-            local report = targetTrace.report
+        local report = pendingTargetClick and pendingTargetClick.report
+        if report and not report.afterClick then
             if issecretvalue and issecretvalue(unit) then
                 report.targetCall = "argument restricted"
             else
@@ -323,21 +324,50 @@ local function traceTargetCalls()
             end
         end
     end)
-    return macroHook, targetHook
+    return { macro = macroHook, target = targetHook }
 end
 
-local function finishTargetClick(trace)
-    local report = trace.report
-    report.afterClick = addon.GetTargetResult(trace.entry)
-    C_Timer.After(0.25, function()
-        report.afterDelay = addon.GetTargetResult(trace.entry)
-        report.result = (report.afterClick == "selected" or report.targetChangedTo == "selected")
-            and "selected" or report.afterDelay
-        if targetTrace == trace then
-            targetTrace = nil
+local function updateDebugLogging()
+    addon.SetDebugLogging(db, db.debugLogging)
+    local debugEvents = { "PLAYER_LOGOUT", "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN", "UI_ERROR_MESSAGE" }
+    if db.debugLogging then
+        targetHooks = targetHooks or traceTargetCalls()
+        for _, event in ipairs(debugEvents) do
+            events:RegisterEvent(event)
         end
-        if lastTargetAction == report and (report.result == "no target" or report.result == "different target") then
-            UIErrorsFrame:AddMessage("GuildWave: The game did not select " .. trace.entry.name .. ".", 1, 0.66, 0.25)
+    else
+        lastTargetAction = nil
+        if pendingTargetClick then
+            pendingTargetClick.report = nil
+        end
+        for _, event in ipairs(debugEvents) do
+            events:UnregisterEvent(event)
+        end
+    end
+end
+
+local function finishTargetClick(click)
+    local afterClick = addon.GetTargetResult(click.entry)
+    if click.report then
+        click.report.afterClick = afterClick
+    elseif afterClick == "selected" then
+        pendingTargetClick = nil
+        return
+    end
+    C_Timer.After(0.25, function()
+        if pendingTargetClick ~= click then
+            return
+        end
+        pendingTargetClick = nil
+        local afterDelay = addon.GetTargetResult(click.entry)
+        local report = click.report
+        local selected = afterClick == "selected" or (report and report.targetChangedTo == "selected")
+        local result = selected and "selected" or afterDelay
+        if report then
+            report.afterDelay, report.result = afterDelay, result
+        end
+        if result == "no target" or result == "different target" then
+            UIErrorsFrame:AddMessage("GuildWave: The game did not select " .. click.entry.name .. ".", 1, 0.66, 0.25)
         end
     end)
 end
@@ -383,7 +413,7 @@ local function createPlayerMenu()
     menu.title:SetWordWrap(false)
     menu.actions = {}
     menu:SetScript("OnHide", function(self)
-        self.entry, self.mode, self.attempt = nil, nil, nil
+        self.entry, self.mode, self.canTarget = nil, nil, nil
     end)
 
     local button = createMenuButton(menu, 1, "SecureActionButtonTemplate")
@@ -392,44 +422,54 @@ local function createPlayerMenu()
     button:RegisterForClicks("AnyUp", "AnyDown")
     button:SetAttribute("useOnKeyDown", false)
     button:SetAttribute("type1", "macro")
-    local macroHook, targetHook = traceTargetCalls()
     button:HookScript("PreClick", function(self, mouse, down)
-        if mouse ~= "LeftButton" or down or not menu.attempt then
+        local entry = menu.entry
+        if mouse ~= "LeftButton" or down or not entry then
             return
         end
-        local report = menu.attempt
-        lastTargetAction = report
-        targetTrace = nil
-        report.combat = InCombatLockdown() == true
-        if report.combat then
-            report.result = "combat lockdown"
+        pendingTargetClick = nil
+        local combat = InCombatLockdown() == true
+        local report
+        if db.debugLogging then
+            report = { source = entry.fromNameplate and "nameplate" or "group", combat = combat }
+            lastTargetAction = report
+        end
+        if combat then
+            if report then
+                report.result = "combat lockdown"
+            end
             return
         end
         local macro
-        if menu.entry and panel:IsShown() and db.mode == menu.mode and db[profileKey(menu.mode)].menu_TARGET then
-            macro = addon.GetTargetMacro(menu.entry, menu.mode, db.otherGuild)
+        if panel:IsShown() and db.mode == menu.mode and db[profileKey(menu.mode)].menu_TARGET then
+            macro = addon.GetTargetMacro(entry, menu.mode, db.otherGuild)
         end
         self:SetAttribute("macrotext1", macro)
-        report.result = macro and "click received" or "unit unavailable"
+        menu.canTarget = macro ~= nil
+        if report then
+            report.result = macro and "click received" or "unit unavailable"
+            if macro then
+                report.macro = macro
+                report.beforeClick = addon.GetTargetResult(entry)
+                report.macroDispatch = targetHooks.macro and "not observed" or "hook unavailable"
+                report.targetCall = targetHooks.target and "not observed" or "hook unavailable"
+            end
+        end
         if macro then
-            report.macro = macro
-            report.beforeClick = addon.GetTargetResult(menu.entry)
-            report.macroDispatch = macroHook and "not observed" or "hook unavailable"
-            report.targetCall = targetHook and "not observed" or "hook unavailable"
-            targetTrace = { entry = menu.entry, report = report }
+            pendingTargetClick = { entry = entry, report = report }
         end
     end)
     button:HookScript("PostClick", function(_, mouse, down)
-        if mouse ~= "LeftButton" or down or InCombatLockdown() or not menu.attempt then
+        if mouse ~= "LeftButton" or down or InCombatLockdown() or not menu.entry then
             return
         end
-        local attempt = menu.attempt
+        local canTarget = menu.canTarget
         closePlayerMenu()
-        if attempt.result == "unit unavailable" then
+        if canTarget == false then
             UIErrorsFrame:AddMessage("GuildWave: That unit is no longer available.", 1, 0.66, 0.25)
             queueRefresh()
-        elseif targetTrace and targetTrace.report == attempt then
-            finishTargetClick(targetTrace)
+        elseif canTarget and pendingTargetClick then
+            finishTargetClick(pendingTargetClick)
         end
     end)
     return menu
@@ -446,8 +486,9 @@ local function showPlayerTargetMenu(entry, mode, actions)
     x, y = x / scale - UIParent:GetLeft(), y / scale - UIParent:GetBottom()
 
     menu.entry, menu.mode = entry, mode
-    menu.attempt = { source = entry.fromNameplate and "nameplate" or "group", result = "menu opened" }
-    lastTargetAction = lastTargetAction or menu.attempt
+    if db.debugLogging and not lastTargetAction then
+        lastTargetAction = { source = entry.fromNameplate and "nameplate" or "group", result = "menu opened" }
+    end
     menu.targetButton:SetAttribute("macrotext1", addon.GetTargetMacro(entry, mode, db.otherGuild))
     for index, action in ipairs(actions) do
         local button = menu.actions[index] or createMenuButton(menu, index + 1)
@@ -615,6 +656,10 @@ local function registerSettings()
     local targetSetting = Settings.RegisterAddOnSetting(
         guild, "GuildWave_pinTarget", "pinTarget", db, "boolean", "Pin selected target to top", false)
     targetSetting:SetValueChangedCallback(queueRefresh)
+    debugSetting = Settings.RegisterAddOnSetting(
+        guild, "GuildWave_debugLogging", "debugLogging", db, "boolean", "Save debug reports", false)
+    debugSetting:SetValueChangedCallback(updateDebugLogging)
+    Settings.CreateCheckbox(guild, debugSetting, "Save targeting and scan diagnostics on reload or logout.")
 
     local listSettings = {}
     for _, mode in ipairs(addon.Modes) do
@@ -675,10 +720,12 @@ local function captureDiagnostics(slot)
         report.error = tostring(entries)
     end
 
-    if type(db.debugReports) ~= "table" then
-        db.debugReports = {}
+    if db.debugLogging then
+        if type(db.debugReports) ~= "table" then
+            db.debugReports = {}
+        end
+        db.debugReports[slot] = report
     end
-    db.debugReports[slot] = report
     return report
 end
 
@@ -715,6 +762,9 @@ SlashCmdList.GUILDWAVE = function(message)
         openOptions()
     elseif command == "debug" and argument == "" then
         printDiagnostics(captureDiagnostics("manual"))
+    elseif command == "debug" and (argument == "on" or argument == "off") then
+        debugSetting:SetValue(argument == "on")
+        print(db.debugLogging and "GuildWave debug logging is on." or "GuildWave debug logging is off.")
     elseif addon.Views[command] and (command == "other" or argument == "") then
         if command == "other" and argument ~= "" then
             db.otherGuild = argument
@@ -725,7 +775,7 @@ SlashCmdList.GUILDWAVE = function(message)
     elseif command == "" then
         togglePanel()
     else
-        print("GuildWave: /guildwave [guild | group | anyone | other [guild name] | options | debug]")
+        print("GuildWave: /guildwave [guild | group | anyone | other [guild name] | options | debug [on | off]]")
     end
 end
 
@@ -734,10 +784,9 @@ panel:SetScript("OnShow", function()
     refresh()
 end)
 
-local events = CreateFrame("Frame")
+events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
-events:RegisterEvent("PLAYER_LOGOUT")
 events:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 events:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 events:RegisterEvent("PLAYER_TARGET_CHANGED")
@@ -749,9 +798,6 @@ events:RegisterEvent("UNIT_IN_RANGE_UPDATE")
 events:RegisterEvent("UNIT_DISTANCE_CHECK_UPDATE")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
-events:RegisterEvent("ADDON_ACTION_BLOCKED")
-events:RegisterEvent("ADDON_ACTION_FORBIDDEN")
-events:RegisterEvent("UI_ERROR_MESSAGE")
 events:RegisterEvent("GLOBAL_MOUSE_DOWN")
 events:RegisterEvent("CVAR_UPDATE")
 events:RegisterEvent("DISPLAY_SIZE_CHANGED")
@@ -768,18 +814,23 @@ events:SetScript("OnEvent", function(self, event, arg, detail)
                 panel:SetPoint(position.point, UIParent, position.relativePoint, position.x, position.y)
             end
             registerSettings()
+            updateDebugLogging()
             createMinimapButton()
         end
-    elseif event == "PLAYER_LOGOUT" and db then
-        captureDiagnostics("logout")
+    elseif event == "PLAYER_LOGOUT" then
+        if db.debugLogging then
+            captureDiagnostics("logout")
+        end
     elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
-        if targetTrace and (not issecretvalue or not issecretvalue(arg)) and arg == addonName then
+        local report = pendingTargetClick and pendingTargetClick.report
+        if report and (not issecretvalue or not issecretvalue(arg)) and arg == addonName then
             local readableDetail = (not issecretvalue or not issecretvalue(detail)) and type(detail) == "string"
-            targetTrace.report.blockedAction = readableDetail and (event .. " " .. detail) or event
+            report.blockedAction = readableDetail and (event .. " " .. detail) or event
         end
     elseif event == "UI_ERROR_MESSAGE" then
-        if targetTrace and not targetTrace.report.afterClick and (not issecretvalue or not issecretvalue(detail)) then
-            targetTrace.report.clientError = detail
+        local report = pendingTargetClick and pendingTargetClick.report
+        if report and not report.afterClick and (not issecretvalue or not issecretvalue(detail)) then
+            report.clientError = detail
         end
     elseif event == "GLOBAL_MOUSE_DOWN" then
         if playerMenu and playerMenu:IsShown() and not playerMenu:IsMouseOver() then
@@ -797,8 +848,9 @@ events:SetScript("OnEvent", function(self, event, arg, detail)
         closePlayerMenu()
         queueRefresh()
     elseif event == "PLAYER_TARGET_CHANGED" then
-        if targetTrace and targetTrace.report.targetChangedTo ~= "selected" then
-            targetTrace.report.targetChangedTo = addon.GetTargetResult(targetTrace.entry)
+        local report = pendingTargetClick and pendingTargetClick.report
+        if report and report.targetChangedTo ~= "selected" then
+            report.targetChangedTo = addon.GetTargetResult(pendingTargetClick.entry)
         end
         if db and db.pinTarget then
             queueRefresh()
