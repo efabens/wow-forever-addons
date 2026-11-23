@@ -1,5 +1,5 @@
 local addon = {}
-assert(loadfile("forever-addons/GuildWave/Core.lua"))("GuildWave", addon)
+assert(loadfile("GuildWave/Core.lua"))("GuildWave", addon)
 
 local saved = addon.LoadSettings({ guild = { limit = 70, left = "UNKNOWN", menu_WAVE = false } })
 assert(saved.mode == "guild" and saved.guild.left == "WAVE" and saved.group.left == "DANCE")
