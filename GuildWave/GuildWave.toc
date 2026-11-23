@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: GuildWave
 ## Notes: Wave at nearby guildmates and greet your party or raid.
-## Version: 0.1.13
+## Version: 0.1.14
 ## SavedVariablesPerCharacter: GuildWaveDB
 
 Core.lua
